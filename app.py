@@ -142,7 +142,10 @@ for col in num_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")
         miss = int(df[col].isna().sum())
         if miss > 0:
-            df[col] = df[col].fillna(df[col].median() if not df[col].isna().all() else 0.0)
+            median_val = df[col].median()
+            if pd.isna(median_val):
+                median_val = 0.0
+            df[col] = df[col].fillna(median_val)
             log.append((f"Median imputation: {col}", miss))
 
 cat_cols = ["Road_Access", "Health_Facility_Access", "School_Access", "Disaster_Risk_Level"]
@@ -151,7 +154,8 @@ for col in cat_cols:
         df[col] = df[col].astype(str).str.strip().replace("", np.nan)
         miss = int(df[col].isna().sum())
         if miss > 0:
-            mode_val = df[col].mode(dropna=True).iloc[0] if not df[col].mode(dropna=True).empty else "Medium"
+            mode_series = df[col].mode(dropna=True)
+            mode_val = mode_series.iloc[0] if not mode_series.empty else "Medium"
             df[col] = df[col].fillna(mode_val)
             log.append((f"Mode imputation: {col}", miss))
 
@@ -177,7 +181,12 @@ FEATURES = ["Population", "Households", "Poverty_Rate (%)", "Unemployment_Rate (
 X_raw = df[FEATURES].copy()
 for col, mapping in ORD.items():
     X_raw[col] = X_raw[col].map(mapping)
-X_raw = X_raw.fillna(X_raw.median() if not X_raw.isna().all() else 0.0)
+
+for col in FEATURES:
+    median_val = X_raw[col].median()
+    if pd.isna(median_val):
+        median_val = 0.0
+    X_raw[col] = X_raw[col].fillna(median_val)
 
 TARGET_MAP = {"High Priority": 2, "Medium Priority": 1, "Low Priority": 0}
 y = df["Priority_Level"].map(TARGET_MAP).values
