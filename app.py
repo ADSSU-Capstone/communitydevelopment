@@ -76,9 +76,10 @@ if uploaded is not None:
         else:
             wb = load_workbook(uploaded, read_only=True)
             if "Table 1" in wb.sheetnames:
-                raw = pd.read_excel(uploaded, sheet_name="Table 1")
+                # Header is actually on the second row (index 1) due to the description text
+                raw = pd.read_excel(uploaded, sheet_name="Table 1", header=1)
             else:
-                raw = pd.read_excel(uploaded)
+                raw = pd.read_excel(uploaded, header=1)
     except Exception as exc:
         st.error(f"Unable to read uploaded file: {exc}")
         st.stop()
@@ -111,7 +112,8 @@ for col in df.columns:
 before = len(df)
 df = df[df["Priority_Level"].notna()]
 df = df[df["Priority_Level"].astype(str).str.strip() != ""]
-log.append(("Drop blank Priority_Level", before - len(df)))
+df = df[~df["Priority_Level"].astype(str).str.contains("High Priority - Area", na=False)]
+log.append(("Drop blank or descriptive Priority_Level", before - len(df)))
 
 before = len(df)
 df = df[df["Barangay Name"].notna()]
@@ -156,6 +158,8 @@ cat_cols = ["Road_Access", "Health_Facility_Access", "School_Access", "Disaster_
 for col in cat_cols:
     if col in df.columns:
         df[col] = df[col].astype(str).str.strip().replace("", np.nan)
+        # Some text descriptions might be present, so extract the first word for safety
+        df[col] = df[col].astype(str).str.split().str[0].replace("nan", np.nan)
         miss = int(df[col].isna().sum())
         if miss > 0:
             mode_series = df[col].mode(dropna=True)
@@ -305,7 +309,7 @@ with tabs[0]:
         ax.set_xlabel(breakdown)
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
-        ax.legend(title="Priority", frameon=False)
+        ax.legend(title="Priority", frameon=False, loc='upper left', bbox_to_anchor=(1, 1))
         plt.xticks(rotation=45, ha="right")
         st.pyplot(fig)
         plt.close(fig)
@@ -315,13 +319,16 @@ with tabs[0]:
         line_df = df.groupby(["City Name", "Priority_Level"])[line_var].mean().unstack()
         line_df = line_df.reindex(columns=[c for c in order if c in line_df.columns])
         
+        # Interpolate to connect lines smoothly across missing cities for specific priorities
+        line_df = line_df.interpolate(method='linear', limit_direction='both')
+        
         fig2, ax2 = plt.subplots(figsize=(8, 4))
         line_df.plot(kind="line", marker="o", ax=ax2, color=[palette[c] for c in line_df.columns])
         ax2.set_ylabel(f"Average {line_var}")
         ax2.set_xlabel("City Name")
         ax2.spines["top"].set_visible(False)
         ax2.spines["right"].set_visible(False)
-        ax2.legend(title="Priority", frameon=False)
+        ax2.legend(title="Priority", frameon=False, loc='upper left', bbox_to_anchor=(1, 1))
         plt.xticks(rotation=45, ha="right")
         st.pyplot(fig2)
         plt.close(fig2)
@@ -331,7 +338,9 @@ with tabs[0]:
     st.markdown("### Indicator Averages by Priority Level")
     try:
         valid_features = [f for f in FEATURES if f in df.columns]
-        summary = df.groupby("Priority_Level")[valid_features].mean().round(2)
+        summary_df = df[valid_features].apply(pd.to_numeric, errors="coerce")
+        summary_df["Priority_Level"] = df["Priority_Level"]
+        summary = summary_df.groupby("Priority_Level")[valid_features].mean().round(2)
         summary = summary.reindex([c for c in order if c in summary.index])
         st.dataframe(summary, use_container_width=True)
         st.write("This table provides the average scores of all socioeconomic, infrastructure, and disaster indicators grouped by their actual priority classification, allowing for a direct comparison of living conditions between High, Medium, and Low priority barangays.")
@@ -480,7 +489,13 @@ with tabs[5]:
 
         top_gap_name = top_gaps.index[0]
         top_gap_count = int(top_gaps.iloc[0])
+        
+        st.markdown("#### Automated Recommendations")
         st.write(f"Across the {len(hp)} barangays predicted as High Priority, **{top_gap_name.lower()}** is the most frequent primary service gap, affecting {top_gap_count} barangays. This indicates that immediate resource allocation and intervention should be directed towards addressing this specific development dimension.")
+        
+        top_city = gap_city.iloc[0]["City Name"]
+        top_city_gap = gap_city.iloc[0]["Primary_Gap"]
+        st.write(f"The municipality of **{top_city}** requires the most urgent attention for **{top_city_gap.lower()}** initiatives, as it holds the highest concentration of High Priority barangays facing this specific gap.")
 
         detail = hp[["City Name", "Barangay Name", "Primary_Gap", "Poverty_Rate (%)", "Access_to_Water (%)", "Internet_Access (%)", "Road_Access", "Disaster_Risk_Level"]].copy()
         detail = detail.rename(columns={
