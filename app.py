@@ -76,7 +76,6 @@ if uploaded is not None:
         else:
             wb = load_workbook(uploaded, read_only=True)
             if "Table 1" in wb.sheetnames:
-                # Header is actually on the second row (index 1) due to the description text
                 raw = pd.read_excel(uploaded, sheet_name="Table 1", header=1)
             else:
                 raw = pd.read_excel(uploaded, header=1)
@@ -98,11 +97,34 @@ else:
 
 log = []
 df = raw.copy()
-df.columns = [str(c).strip() for c in df.columns]
-df = df.rename(columns={"Popolation": "Population", "# of total Households": "Households"})
+
+# Clean up column names to prevent header mismatches
+def clean_col_name(c):
+    c = str(c).strip()
+    c = re.sub(r"[^a-zA-Z0-9_]", "_", c)
+    c = re.sub(r"_+", "_", c)
+    return c.strip("_")
+
+df.columns = [clean_col_name(c) for c in df.columns]
 
 if "Priority_Level" not in df.columns:
-    st.error("Priority_Level column not found.")
+    # Fallback to fuzzy matching
+    for col in df.columns:
+        if "priority" in col.lower():
+            df = df.rename(columns={col: "Priority_Level"})
+            break
+
+df = df.rename(columns={
+    "Popolation": "Population", 
+    "Population_": "Population", 
+    "of_total_Households": "Households",
+    "Households_": "Households",
+    "City_Name": "City Name",
+    "Barangay_Name": "Barangay Name"
+})
+
+if "Priority_Level" not in df.columns:
+    st.error("Priority_Level column not found in the dataset headers.")
     st.stop()
 
 for col in df.columns:
@@ -115,10 +137,11 @@ df = df[df["Priority_Level"].astype(str).str.strip() != ""]
 df = df[~df["Priority_Level"].astype(str).str.contains("High Priority - Area", na=False)]
 log.append(("Drop blank or descriptive Priority_Level", before - len(df)))
 
-before = len(df)
-df = df[df["Barangay Name"].notna()]
-df = df[df["Barangay Name"].astype(str).str.strip() != ""]
-log.append(("Drop blank Barangay Name", before - len(df)))
+if "Barangay Name" in df.columns:
+    before = len(df)
+    df = df[df["Barangay Name"].notna()]
+    df = df[df["Barangay Name"].astype(str).str.strip() != ""]
+    log.append(("Drop blank Barangay Name", before - len(df)))
 
 priority_map = {
     "High Priority": "High Priority", "High": "High Priority",
@@ -132,17 +155,22 @@ before = len(df)
 df = df.dropna(subset=["Priority_Level"])
 log.append(("Normalize Priority_Level labels", before - len(df)))
 
-if "Province Name" in df.columns:
+if "Province_Name" in df.columns:
+    before = len(df)
+    df = df[df["Province_Name"].astype(str).str.strip() == "Agusan del Sur"]
+    log.append(("Province whitelist (Agusan del Sur)", before - len(df)))
+elif "Province Name" in df.columns:
     before = len(df)
     df = df[df["Province Name"].astype(str).str.strip() == "Agusan del Sur"]
     log.append(("Province whitelist (Agusan del Sur)", before - len(df)))
 
-key_cols = [c for c in ["Region Name", "Province Name", "City Name", "Barangay Name", "Year"] if c in df.columns]
-before = len(df)
-df = df.drop_duplicates(subset=key_cols)
-log.append(("Exact duplicates removed", before - len(df)))
+key_cols = [c for c in ["Region_Name", "Province_Name", "City_Name", "Barangay_Name", "Year", "Region Name", "Province Name", "City Name", "Barangay Name"] if c in df.columns]
+if key_cols:
+    before = len(df)
+    df = df.drop_duplicates(subset=key_cols)
+    log.append(("Exact duplicates removed", before - len(df)))
 
-num_cols = ["Population", "Households", "Poverty_Rate (%)", "Unemployment_Rate (%)", "Access_to_Water (%)", "Internet_Access (%)"]
+num_cols = ["Population", "Households", "Poverty_Rate", "Unemployment_Rate", "Access_to_Water", "Internet_Access"]
 for col in num_cols:
     if col in df.columns:
         df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -158,7 +186,6 @@ cat_cols = ["Road_Access", "Health_Facility_Access", "School_Access", "Disaster_
 for col in cat_cols:
     if col in df.columns:
         df[col] = df[col].astype(str).str.strip().replace("", np.nan)
-        # Some text descriptions might be present, so extract the first word for safety
         df[col] = df[col].astype(str).str.split().str[0].replace("nan", np.nan)
         miss = int(df[col].isna().sum())
         if miss > 0:
@@ -167,7 +194,7 @@ for col in cat_cols:
             df[col] = df[col].fillna(mode_val)
             log.append((f"Mode imputation: {col}", miss))
 
-for col in ["Poverty_Rate (%)", "Unemployment_Rate (%)", "Access_to_Water (%)", "Internet_Access (%)"]:
+for col in ["Poverty_Rate", "Unemployment_Rate", "Access_to_Water", "Internet_Access"]:
     if col in df.columns:
         clipped = int(((df[col] < 0) | (df[col] > 100)).sum())
         df[col] = df[col].clip(0, 100)
@@ -182,15 +209,17 @@ ORD = {
     "School_Access": {"High": 0, "Medium": 1, "Low": 2},
     "Disaster_Risk_Level": {"High": 2, "Medium": 1, "Low": 0},
 }
-FEATURES = ["Population", "Households", "Poverty_Rate (%)", "Unemployment_Rate (%)",
-            "Access_to_Water (%)", "Internet_Access (%)",
+FEATURES = ["Population", "Households", "Poverty_Rate", "Unemployment_Rate",
+            "Access_to_Water", "Internet_Access",
             "Road_Access", "Health_Facility_Access", "School_Access", "Disaster_Risk_Level"]
 
-X_raw = df[FEATURES].copy()
-for col, mapping in ORD.items():
-    X_raw[col] = X_raw[col].map(mapping)
+valid_features = [f for f in FEATURES if f in df.columns]
+X_raw = df[valid_features].copy()
+for col in valid_features:
+    if col in ORD:
+        X_raw[col] = X_raw[col].map(ORD[col])
 
-for col in FEATURES:
+for col in valid_features:
     median_val = X_raw[col].median()
     if pd.isna(median_val):
         median_val = 0.0
@@ -200,17 +229,18 @@ TARGET_MAP = {"High Priority": 2, "Medium Priority": 1, "Low Priority": 0}
 y = df["Priority_Level"].map(TARGET_MAP).values
 
 scaler = MinMaxScaler()
-X_all_scaled = pd.DataFrame(scaler.fit_transform(X_raw), columns=FEATURES, index=df.index)
+X_all_scaled = pd.DataFrame(scaler.fit_transform(X_raw), columns=valid_features, index=df.index)
 mi_all = mutual_info_classif(X_all_scaled, y, random_state=42)
 
 with st.sidebar:
     st.markdown("---")
-    k_features = st.slider("Retained features (k)", 3, len(FEATURES), 8)
+    max_k = min(8, len(valid_features))
+    k_features = st.slider("Retained features (k)", 3, len(valid_features), max_k)
 
 selector = SelectKBest(mutual_info_classif, k=k_features)
 X = selector.fit_transform(X_all_scaled, y)
 selected_mask = selector.get_support()
-selected_features = [f for f, s in zip(FEATURES, selected_mask) if s]
+selected_features = [f for f, s in zip(valid_features, selected_mask) if s]
 
 try:
     X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
@@ -264,15 +294,16 @@ else:
     rf_importance = pd.Series(dtype=float)
 
 severity = pd.DataFrame(index=df.index)
-severity["Poverty"] = df["Poverty_Rate (%)"].rank(pct=True)
-severity["Unemployment"] = df["Unemployment_Rate (%)"].rank(pct=True)
-severity["Water"] = 1 - df["Access_to_Water (%)"].rank(pct=True)
-severity["Internet"] = 1 - df["Internet_Access (%)"].rank(pct=True)
-severity["Road"] = df["Road_Access"].map(ORD["Road_Access"]).rank(pct=True)
-severity["Health"] = df["Health_Facility_Access"].map(ORD["Health_Facility_Access"]).rank(pct=True)
-severity["School"] = df["School_Access"].map(ORD["School_Access"]).rank(pct=True)
-severity["Disaster"] = df["Disaster_Risk_Level"].map(ORD["Disaster_Risk_Level"]).rank(pct=True)
-df["Primary_Gap"] = severity.idxmax(axis=1)
+if "Poverty_Rate" in df.columns: severity["Poverty"] = df["Poverty_Rate"].rank(pct=True)
+if "Unemployment_Rate" in df.columns: severity["Unemployment"] = df["Unemployment_Rate"].rank(pct=True)
+if "Access_to_Water" in df.columns: severity["Water"] = 1 - df["Access_to_Water"].rank(pct=True)
+if "Internet_Access" in df.columns: severity["Internet"] = 1 - df["Internet_Access"].rank(pct=True)
+if "Road_Access" in df.columns: severity["Road"] = df["Road_Access"].map(ORD["Road_Access"]).rank(pct=True)
+if "Health_Facility_Access" in df.columns: severity["Health"] = df["Health_Facility_Access"].map(ORD["Health_Facility_Access"]).rank(pct=True)
+if "School_Access" in df.columns: severity["School"] = df["School_Access"].map(ORD["School_Access"]).rank(pct=True)
+if "Disaster_Risk_Level" in df.columns: severity["Disaster"] = df["Disaster_Risk_Level"].map(ORD["Disaster_Risk_Level"]).rank(pct=True)
+
+df["Primary_Gap"] = severity.idxmax(axis=1) if not severity.empty else "Unknown"
 
 palette = {"High Priority": "#b91c1c", "Medium Priority": "#f59e0b", "Low Priority": "#16a34a"}
 
@@ -298,7 +329,9 @@ with tabs[0]:
     
     colA, colB = st.columns(2)
     with colA:
-        breakdown = st.selectbox("Barangay Count Breakdown by:", ["City Name", "Disaster_Risk_Level", "Road_Access", "Health_Facility_Access", "School_Access"], key="breakdown_select")
+        bd_options = [c for c in ["City_Name", "City Name", "Disaster_Risk_Level", "Road_Access", "Health_Facility_Access", "School_Access"] if c in df.columns]
+        breakdown = st.selectbox("Barangay Count Breakdown by:", bd_options, key="breakdown_select")
+        
         ct = pd.crosstab(df[breakdown], df["Priority_Level"])
         order = ["High Priority", "Medium Priority", "Low Priority"]
         ct = ct.reindex(columns=[c for c in order if c in ct.columns], fill_value=0)
@@ -315,17 +348,19 @@ with tabs[0]:
         plt.close(fig)
 
     with colB:
-        line_var = st.selectbox("Trend Indicator (Line Graph):", ["Poverty_Rate (%)", "Unemployment_Rate (%)", "Access_to_Water (%)", "Internet_Access (%)"], key="line_var")
-        line_df = df.groupby(["City Name", "Priority_Level"])[line_var].mean().unstack()
+        line_opts = [c for c in ["Poverty_Rate", "Unemployment_Rate", "Access_to_Water", "Internet_Access"] if c in df.columns]
+        line_var = st.selectbox("Trend Indicator (Line Graph):", line_opts, key="line_var")
+        
+        city_col = "City_Name" if "City_Name" in df.columns else "City Name"
+        line_df = df.groupby([city_col, "Priority_Level"])[line_var].mean().unstack()
         line_df = line_df.reindex(columns=[c for c in order if c in line_df.columns])
         
-        # Interpolate to connect lines smoothly across missing cities for specific priorities
         line_df = line_df.interpolate(method='linear', limit_direction='both')
         
         fig2, ax2 = plt.subplots(figsize=(8, 4))
         line_df.plot(kind="line", marker="o", ax=ax2, color=[palette[c] for c in line_df.columns])
         ax2.set_ylabel(f"Average {line_var}")
-        ax2.set_xlabel("City Name")
+        ax2.set_xlabel(city_col)
         ax2.spines["top"].set_visible(False)
         ax2.spines["right"].set_visible(False)
         ax2.legend(title="Priority", frameon=False, loc='upper left', bbox_to_anchor=(1, 1))
@@ -337,7 +372,6 @@ with tabs[0]:
 
     st.markdown("### Indicator Averages by Priority Level")
     try:
-        valid_features = [f for f in FEATURES if f in df.columns]
         summary_df = df[valid_features].apply(pd.to_numeric, errors="coerce")
         summary_df["Priority_Level"] = df["Priority_Level"]
         summary = summary_df.groupby("Priority_Level")[valid_features].mean().round(2)
@@ -368,7 +402,7 @@ with tabs[1]:
 with tabs[2]:
     st.markdown("### Feature Importance Analysis")
     
-    mi_sorted = pd.Series(mi_all, index=FEATURES).sort_values(ascending=False)
+    mi_sorted = pd.Series(mi_all, index=valid_features).sort_values(ascending=False)
     mi_top = mi_sorted.head(k_features).sort_values(ascending=True)
 
     c1, c2 = st.columns(2)
@@ -431,32 +465,40 @@ with tabs[3]:
 
 with tabs[4]:
     st.markdown("### Barangay Priority Registry")
-    registry = df[["City Name", "Barangay Name", "Priority_Level", "Predicted_Priority", "Poverty_Rate (%)", "Access_to_Water (%)", "Internet_Access (%)", "Road_Access", "Disaster_Risk_Level", "Primary_Gap"]].copy()
+    city_col = "City_Name" if "City_Name" in df.columns else "City Name"
+    brgy_col = "Barangay_Name" if "Barangay_Name" in df.columns else "Barangay Name"
+    
+    reg_cols = [city_col, brgy_col, "Priority_Level", "Predicted_Priority", "Poverty_Rate", "Access_to_Water", "Internet_Access", "Road_Access", "Disaster_Risk_Level", "Primary_Gap"]
+    reg_cols = [c for c in reg_cols if c in df.columns]
+    
+    registry = df[reg_cols].copy()
     registry = registry.rename(columns={
         "Priority_Level": "Actual Priority",
         "Predicted_Priority": "Predicted Priority",
-        "Poverty_Rate (%)": "Poverty Rate",
-        "Access_to_Water (%)": "Water Access",
-        "Internet_Access (%)": "Internet Access",
+        "Poverty_Rate": "Poverty Rate",
+        "Access_to_Water": "Water Access",
+        "Internet_Access": "Internet Access",
         "Road_Access": "Road Access",
         "Disaster_Risk_Level": "Disaster Risk",
         "Primary_Gap": "Primary Gap",
+        city_col: "City",
+        brgy_col: "Barangay"
     })
 
     colA, colB = st.columns(2)
     with colA:
-        city_filter = st.selectbox("Filter by City", ["All"] + sorted(registry["City Name"].dropna().unique().tolist()), key="city_filter")
+        city_filter = st.selectbox("Filter by City", ["All"] + sorted(registry["City"].dropna().unique().tolist()), key="city_filter")
     with colB:
         name_filter = st.text_input("Search Barangay Name", key="name_filter")
 
     view = registry.copy()
     if city_filter != "All":
-        view = view[view["City Name"] == city_filter]
+        view = view[view["City"] == city_filter]
     if name_filter:
-        view = view[view["Barangay Name"].str.contains(name_filter, case=False, na=False)]
+        view = view[view["Barangay"].str.contains(name_filter, case=False, na=False)]
 
     priority_rank = {"High Priority": 2, "Medium Priority": 1, "Low Priority": 0}
-    view = view.assign(_rank=view["Actual Priority"].map(priority_rank)).sort_values(["_rank", "City Name", "Barangay Name"], ascending=[False, True, True]).drop(columns="_rank")
+    view = view.assign(_rank=view["Actual Priority"].map(priority_rank)).sort_values(["_rank", "City", "Barangay"], ascending=[False, True, True]).drop(columns="_rank")
 
     st.dataframe(view, use_container_width=True, hide_index=True)
 
@@ -471,10 +513,12 @@ with tabs[5]:
     if hp.empty:
         st.write("No barangays are currently predicted as High Priority under the selected feature set.")
     else:
+        city_col = "City_Name" if "City_Name" in df.columns else "City Name"
+        
         c1, c2 = st.columns([1, 1])
         with c1:
-            gap_city = hp.groupby(["City Name", "Primary_Gap"]).size().reset_index(name="Barangays")
-            gap_city = gap_city.sort_values(["City Name", "Barangays"], ascending=[True, False])
+            gap_city = hp.groupby([city_col, "Primary_Gap"]).size().reset_index(name="Barangays")
+            gap_city = gap_city.sort_values([city_col, "Barangays"], ascending=[True, False])
             st.dataframe(gap_city, use_container_width=True, hide_index=True)
             
         with c2:
@@ -493,18 +537,24 @@ with tabs[5]:
         st.markdown("#### Automated Recommendations")
         st.write(f"Across the {len(hp)} barangays predicted as High Priority, **{top_gap_name.lower()}** is the most frequent primary service gap, affecting {top_gap_count} barangays. This indicates that immediate resource allocation and intervention should be directed towards addressing this specific development dimension.")
         
-        top_city = gap_city.iloc[0]["City Name"]
+        top_city = gap_city.iloc[0][city_col]
         top_city_gap = gap_city.iloc[0]["Primary_Gap"]
         st.write(f"The municipality of **{top_city}** requires the most urgent attention for **{top_city_gap.lower()}** initiatives, as it holds the highest concentration of High Priority barangays facing this specific gap.")
 
-        detail = hp[["City Name", "Barangay Name", "Primary_Gap", "Poverty_Rate (%)", "Access_to_Water (%)", "Internet_Access (%)", "Road_Access", "Disaster_Risk_Level"]].copy()
+        detail_cols = [city_col, "Barangay_Name" if "Barangay_Name" in df.columns else "Barangay Name", "Primary_Gap", "Poverty_Rate", "Access_to_Water", "Internet_Access", "Road_Access", "Disaster_Risk_Level"]
+        detail_cols = [c for c in detail_cols if c in hp.columns]
+        
+        detail = hp[detail_cols].copy()
         detail = detail.rename(columns={
-            "Poverty_Rate (%)": "Poverty Rate",
-            "Access_to_Water (%)": "Water Access",
-            "Internet_Access (%)": "Internet Access",
+            "Poverty_Rate": "Poverty Rate",
+            "Access_to_Water": "Water Access",
+            "Internet_Access": "Internet Access",
             "Road_Access": "Road Access",
             "Disaster_Risk_Level": "Disaster Risk",
             "Primary_Gap": "Primary Gap",
+            city_col: "City",
+            "Barangay_Name": "Barangay",
+            "Barangay Name": "Barangay"
         })
         st.dataframe(detail, use_container_width=True, hide_index=True)
 
