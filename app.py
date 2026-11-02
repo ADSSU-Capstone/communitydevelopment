@@ -65,10 +65,11 @@ if uploaded is not None:
         if uploaded.name.lower().endswith(".csv"):
             raw = pd.read_csv(uploaded)
         else:
-            # Read normally, then drop the first two rows (the header and the description)
             raw = pd.read_excel(uploaded, sheet_name="Table 1")
-            raw.columns = raw.iloc[0]  # Set the actual header from Row 0
-            raw = raw.drop([0, 1])      # Drop the header row and the description row
+            # Set the actual header from Row 0
+            raw.columns = raw.iloc[0]
+            # Drop the header row and the description row
+            raw = raw.drop([0, 1])
             raw = raw.reset_index(drop=True)
     except Exception as exc:
         st.error(f"Unable to read uploaded file: {exc}")
@@ -79,6 +80,10 @@ else:
 
 log = []
 df = raw.copy()
+
+# FIX: Rename duplicate columns to prevent AttributeError
+df.columns = [f"{c}_{i}" if str(c) in df.columns[:i] else str(c) for i, c in enumerate(df.columns)]
+
 df.columns = [clean_col_name(c) for c in df.columns]
 
 col_map = {}
@@ -105,8 +110,9 @@ if "Priority_Level" not in df.columns:
     st.error("Priority_Level column not found in the dataset headers.")
     st.stop()
 
+# FIX: Safely check if Series before mapping
 for col in df.columns:
-    if df[col].dtype == object:
+    if isinstance(df[col], pd.Series) and df[col].dtype == object:
         df[col] = df[col].map(strip_invisible)
 
 before = len(df)
