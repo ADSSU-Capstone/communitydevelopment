@@ -65,8 +65,11 @@ if uploaded is not None:
         if uploaded.name.lower().endswith(".csv"):
             raw = pd.read_csv(uploaded)
         else:
-            # Read Row 1 as headers, and skip Row 2 (the descriptions) entirely
-            raw = pd.read_excel(uploaded, sheet_name="Table 1", header=0, skiprows=[1, 2])
+            # Read normally, then drop the first two rows (the header and the description)
+            raw = pd.read_excel(uploaded, sheet_name="Table 1")
+            raw.columns = raw.iloc[0]  # Set the actual header from Row 0
+            raw = raw.drop([0, 1])      # Drop the header row and the description row
+            raw = raw.reset_index(drop=True)
     except Exception as exc:
         st.error(f"Unable to read uploaded file: {exc}")
         st.stop()
