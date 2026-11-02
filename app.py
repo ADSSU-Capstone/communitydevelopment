@@ -65,7 +65,8 @@ if uploaded is not None:
         if uploaded.name.lower().endswith(".csv"):
             raw = pd.read_csv(uploaded)
         else:
-            raw = pd.read_excel(uploaded, sheet_name="Table 1", header=0, skiprows=[1])
+            # Read Row 1 as headers, and skip Row 2 (the descriptions) entirely
+            raw = pd.read_excel(uploaded, sheet_name="Table 1", header=0, skiprows=[1, 2])
     except Exception as exc:
         st.error(f"Unable to read uploaded file: {exc}")
         st.stop()
@@ -239,9 +240,9 @@ for name, mdl in models.items():
             cv_scores = cross_val_score(mdl, X_tr, y_tr, cv=cv, scoring="accuracy")
             cv_mean = float(cv_scores.mean())
             if np.isnan(cv_mean):
-                cv_mean = np.nan
+                cv_mean = 0.0
         except Exception:
-            cv_mean = np.nan
+            cv_mean = 0.0
             
         results.append({
             "Model": name,
@@ -253,7 +254,7 @@ for name, mdl in models.items():
             "F1": f1_score(y_te, te_pred, average="macro", zero_division=0),
         })
     except Exception:
-        results.append({"Model": name, "Train Accuracy": np.nan, "CV Accuracy": np.nan, "Test Accuracy": np.nan, "Precision": np.nan, "Recall": np.nan, "F1": np.nan})
+        results.append({"Model": name, "Train Accuracy": 0.0, "CV Accuracy": 0.0, "Test Accuracy": 0.0, "Precision": 0.0, "Recall": 0.0, "F1": 0.0})
 
 results_df = pd.DataFrame(results).set_index("Model")
 
