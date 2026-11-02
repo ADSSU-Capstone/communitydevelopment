@@ -49,14 +49,10 @@ if uploaded is not None:
         if uploaded.name.lower().endswith(".csv"):
             raw = pd.read_csv(uploaded)
         else:
-            # Read starting from row 3 (index 2) where the data actually begins.
-            # This completely bypasses the merged headers and description row.
             raw = pd.read_excel(uploaded, sheet_name="Table 1", header=None, skiprows=2)
             
-            # Based on your screenshot:
-            # A: Year, B: Barangay Name, C: Region, D: Province, E: City
-            # F: Households, G: Population, H: Poverty, I: Unemployment
-            # J: Water, K: Internet, L: Road, M: Health, N: School, O: Disaster, P: Priority
+            # Map columns based on your exact Excel layout
+            # A: Year, B: Barangay, C: Region, D: Province, E: City, etc.
             col_names = [
                 "Year", "Barangay_Name", "Region_Name", "Province_Name", "City_Name",
                 "Households", "Population", "Poverty_Rate", "Unemployment_Rate",
@@ -64,11 +60,9 @@ if uploaded is not None:
                 "Health_Facility_Access", "School_Access", "Disaster_Risk_Level", "Priority_Level"
             ]
             
-            # Keep only the first 16 columns
             if raw.shape[1] > 16:
                 raw = raw.iloc[:, :16]
             
-            # Assign the strict names
             raw.columns = col_names[:raw.shape[1]]
     except Exception as exc:
         st.error(f"Unable to read uploaded file: {exc}")
@@ -77,15 +71,15 @@ else:
     st.info("Please upload a dataset to view the dashboard.")
     st.stop()
 
+log = []
 df = raw.copy()
 
-# Handle merged cells by forward-filling City and Province
+# CRITICAL FIX: Forward-fill merged cells so all 314 rows know their City and Province
 if "City_Name" in df.columns:
     df["City_Name"] = df["City_Name"].ffill()
 if "Province_Name" in df.columns:
     df["Province_Name"] = df["Province_Name"].ffill()
 
-# Clean text
 def strip_invisible(value):
     if not isinstance(value, str):
         return value
@@ -98,10 +92,17 @@ for col in df.columns:
     if isinstance(df[col], pd.Series) and df[col].dtype == object:
         df[col] = df[col].map(strip_invisible)
 
-# Clean target
+# Clean rows
+before = len(df)
+df = df.dropna(how="all")
+if before - len(df) > 0:
+    log.append(("Drop completely empty rows", before - len(df)))
+
+before = len(df)
 df = df[df["Priority_Level"].notna()]
 df = df[df["Priority_Level"].astype(str).str.strip() != ""]
 df = df[~df["Priority_Level"].astype(str).str.contains("High Priority - Area", na=False)]
+log.append(("Drop blank or descriptive Priority_Level", before - len(df)))
 
 priority_map = {
     "High Priority": "High Priority", "High": "High Priority",
@@ -111,29 +112,50 @@ priority_map = {
     "Low Priority": "Low Priority", "Low": "Low Priority",
 }
 df["Priority_Level"] = df["Priority_Level"].astype(str).str.strip().map(priority_map)
+before = len(df)
 df = df.dropna(subset=["Priority_Level"])
+log.append(("Normalize Priority_Level labels", before - len(df)))
 
 if "Barangay_Name" in df.columns:
+    before = len(df)
     df = df[df["Barangay_Name"].notna()]
     df = df[df["Barangay_Name"].astype(str).str.strip() != ""]
+    log.append(("Drop blank Barangay Name", before - len(df)))
 
-# Drop duplicates based on City and Barangay
-key_cols = [c for c in ["City_Name", "Barangay_Name"] if c in df.columns]
-df = df.drop_duplicates(subset=key_cols)
+# Keep the clean index
 df = df.reset_index(drop=True)
 
-# Ensure numeric
 num_cols = ["Population", "Households", "Poverty_Rate", "Unemployment_Rate", "Access_to_Water", "Internet_Access"]
 for col in num_cols:
     if col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+        miss = int(df[col].isna().sum())
+        if miss > 0:
+            median_val = df[col].median()
+            if pd.isna(median_val):
+                median_val = 0.0
+            df[col] = df[col].fillna(median_val)
+            log.append((f"Median imputation: {col}", miss))
 
 cat_cols = ["Road_Access", "Health_Facility_Access", "School_Access", "Disaster_Risk_Level"]
 for col in cat_cols:
     if col in df.columns:
-        df[col] = df[col].astype(str).str.strip().str.split().str[0]
+        df[col] = df[col].astype(str).str.strip().replace("", np.nan)
+        df[col] = df[col].astype(str).str.split().str[0].replace("nan", np.nan)
+        miss = int(df[col].isna().sum())
+        if miss > 0:
+            mode_series = df[col].mode(dropna=True)
+            mode_val = mode_series.iloc[0] if not mode_series.empty else "Medium"
+            df[col] = df[col].fillna(mode_val)
+            log.append((f"Mode imputation: {col}", miss))
 
-# Modeling prep
+for col in ["Poverty_Rate", "Unemployment_Rate", "Access_to_Water", "Internet_Access"]:
+    if col in df.columns:
+        clipped = int(((df[col] < 0) | (df[col] > 100)).sum())
+        df[col] = df[col].clip(0, 100)
+        if clipped > 0:
+            log.append((f"Clip out-of-range: {col}", clipped))
+
 ORD = {
     "Road_Access": {"High": 0, "Medium": 1, "Low": 2},
     "Health_Facility_Access": {"High": 0, "Medium": 1, "Low": 2},
