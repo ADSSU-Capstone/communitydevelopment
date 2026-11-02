@@ -4,7 +4,6 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import streamlit as st
-import statsmodels.api as sm
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.naive_bayes import GaussianNB
@@ -13,7 +12,6 @@ from sklearn.feature_selection import SelectKBest, mutual_info_classif
 from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val_score
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
-from openpyxl import load_workbook
 
 st.set_page_config(page_title="Barangay Priority Dashboard", layout="wide")
 
@@ -43,20 +41,6 @@ h1, h2, h3 { color: #1e3a8a; }
 st.title("Barangay Priority Dashboard")
 st.markdown('<div class="dashboard-subtitle">Classification-Based Techniques for Identifying Priority Barangays for Community Development</div>', unsafe_allow_html=True)
 
-def strip_invisible(value):
-    if not isinstance(value, str):
-        return value
-    value = "".join(ch for ch in value if unicodedata.category(ch) != "Cf")
-    value = re.sub(r"[\U0001F300-\U0001FAFF\U00002600-\U000027BF]", "", value)
-    value = re.sub(r"\s+", " ", value).strip()
-    return value
-
-def clean_col_name(c):
-    c = str(c).strip()
-    c = re.sub(r"[^a-zA-Z0-9_]", "_", c)
-    c = re.sub(r"_+", "_", c)
-    return c.strip("_")
-
 with st.sidebar:
     uploaded = st.file_uploader("Upload Dataset (CSV or Excel)", type=["csv", "xlsx"])
 
@@ -65,12 +49,27 @@ if uploaded is not None:
         if uploaded.name.lower().endswith(".csv"):
             raw = pd.read_csv(uploaded)
         else:
-            raw = pd.read_excel(uploaded, sheet_name="Table 1")
-            # Set the actual header from Row 0
-            raw.columns = raw.iloc[0]
-            # Drop the header row and the description row
-            raw = raw.drop([0, 1])
-            raw = raw.reset_index(drop=True)
+            # Read starting from row 3 (index 2) where the data actually begins.
+            # This completely bypasses the merged headers and description row.
+            raw = pd.read_excel(uploaded, sheet_name="Table 1", header=None, skiprows=2)
+            
+            # Based on your exact Excel layout:
+            # A: Region, B: Province, C: City, D: Year, E: Barangay
+            # F: Households, G: Population, H: Poverty, I: Unemployment
+            # J: Water, K: Internet, L: Road, M: Health, N: School, O: Disaster, P: Priority
+            col_names = [
+                "Region_Name", "Province_Name", "City_Name", "Year", "Barangay_Name",
+                "Households", "Population", "Poverty_Rate", "Unemployment_Rate",
+                "Access_to_Water", "Internet_Access", "Road_Access", 
+                "Health_Facility_Access", "School_Access", "Disaster_Risk_Level", "Priority_Level"
+            ]
+            
+            # If the sheet has more than 16 columns, keep only the first 16
+            if raw.shape[1] > 16:
+                raw = raw.iloc[:, :16]
+            
+            # Assign the strict names
+            raw.columns = col_names[:raw.shape[1]]
     except Exception as exc:
         st.error(f"Unable to read uploaded file: {exc}")
         st.stop()
@@ -78,57 +77,31 @@ else:
     st.info("Please upload a dataset to view the dashboard.")
     st.stop()
 
-log = []
 df = raw.copy()
 
-# FIX: Remove duplicate columns before cleaning names
-df = df.loc[:, ~df.columns.duplicated()].copy()
-df.columns = [clean_col_name(c) for c in df.columns]
+# Handle merged cells by forward-filling City and Province
+if "City_Name" in df.columns:
+    df["City_Name"] = df["City_Name"].ffill()
+if "Province_Name" in df.columns:
+    df["Province_Name"] = df["Province_Name"].ffill()
 
-col_map = {}
-for col in df.columns:
-    c_lower = col.lower()
-    if "priority" in c_lower: col_map[col] = "Priority_Level"
-    elif "pop" in c_lower: col_map[col] = "Population"
-    elif "household" in c_lower or col == "of_total_Households": col_map[col] = "Households"
-    elif "city" in c_lower: col_map[col] = "City_Name"
-    elif "barangay" in c_lower and "name" in c_lower: col_map[col] = "Barangay_Name"
-    elif "province" in c_lower: col_map[col] = "Province_Name"
-    elif "poverty" in c_lower: col_map[col] = "Poverty_Rate"
-    elif "unemployment" in c_lower: col_map[col] = "Unemployment_Rate"
-    elif "water" in c_lower: col_map[col] = "Access_to_Water"
-    elif "internet" in c_lower: col_map[col] = "Internet_Access"
-    elif "road" in c_lower: col_map[col] = "Road_Access"
-    elif "health" in c_lower: col_map[col] = "Health_Facility_Access"
-    elif "school" in c_lower: col_map[col] = "School_Access"
-    elif "disaster" in c_lower: col_map[col] = "Disaster_Risk_Level"
-
-df = df.rename(columns=col_map)
-
-if "Priority_Level" not in df.columns:
-    st.error("Priority_Level column not found in the dataset headers.")
-    st.stop()
+# Clean text
+def strip_invisible(value):
+    if not isinstance(value, str):
+        return value
+    value = "".join(ch for ch in value if unicodedata.category(ch) != "Cf")
+    value = re.sub(r"[\U0001F300-\U0001FAFF\U00002600-\U000027BF]", "", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    return value
 
 for col in df.columns:
     if isinstance(df[col], pd.Series) and df[col].dtype == object:
         df[col] = df[col].map(strip_invisible)
 
-before = len(df)
-df = df.dropna(how="all")
-if before - len(df) > 0:
-    log.append(("Drop completely empty rows", before - len(df)))
-
-before = len(df)
+# Clean target
 df = df[df["Priority_Level"].notna()]
 df = df[df["Priority_Level"].astype(str).str.strip() != ""]
 df = df[~df["Priority_Level"].astype(str).str.contains("High Priority - Area", na=False)]
-log.append(("Drop blank or descriptive Priority_Level", before - len(df)))
-
-if "Barangay_Name" in df.columns:
-    before = len(df)
-    df = df[df["Barangay_Name"].notna()]
-    df = df[df["Barangay_Name"].astype(str).str.strip() != ""]
-    log.append(("Drop blank Barangay Name", before - len(df)))
 
 priority_map = {
     "High Priority": "High Priority", "High": "High Priority",
@@ -138,54 +111,29 @@ priority_map = {
     "Low Priority": "Low Priority", "Low": "Low Priority",
 }
 df["Priority_Level"] = df["Priority_Level"].astype(str).str.strip().map(priority_map)
-before = len(df)
 df = df.dropna(subset=["Priority_Level"])
-log.append(("Normalize Priority_Level labels", before - len(df)))
 
-if "Province_Name" in df.columns:
-    before = len(df)
-    df = df[df["Province_Name"].astype(str).str.strip() == "Agusan del Sur"]
-    log.append(("Province whitelist (Agusan del Sur)", before - len(df)))
+if "Barangay_Name" in df.columns:
+    df = df[df["Barangay_Name"].notna()]
+    df = df[df["Barangay_Name"].astype(str).str.strip() != ""]
 
-key_cols = [c for c in ["Region_Name", "Province_Name", "City_Name", "Barangay_Name", "Year"] if c in df.columns]
-if key_cols:
-    before = len(df)
-    df = df.drop_duplicates(subset=key_cols)
-    log.append(("Exact duplicates removed", before - len(df)))
+# Drop duplicates based on City and Barangay
+key_cols = [c for c in ["City_Name", "Barangay_Name"] if c in df.columns]
+df = df.drop_duplicates(subset=key_cols)
+df = df.reset_index(drop=True)
 
+# Ensure numeric
 num_cols = ["Population", "Households", "Poverty_Rate", "Unemployment_Rate", "Access_to_Water", "Internet_Access"]
 for col in num_cols:
     if col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-        miss = int(df[col].isna().sum())
-        if miss > 0:
-            median_val = df[col].median()
-            if pd.isna(median_val):
-                median_val = 0.0
-            df[col] = df[col].fillna(median_val)
-            log.append((f"Median imputation: {col}", miss))
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
 
 cat_cols = ["Road_Access", "Health_Facility_Access", "School_Access", "Disaster_Risk_Level"]
 for col in cat_cols:
     if col in df.columns:
-        df[col] = df[col].astype(str).str.strip().replace("", np.nan)
-        df[col] = df[col].astype(str).str.split().str[0].replace("nan", np.nan)
-        miss = int(df[col].isna().sum())
-        if miss > 0:
-            mode_series = df[col].mode(dropna=True)
-            mode_val = mode_series.iloc[0] if not mode_series.empty else "Medium"
-            df[col] = df[col].fillna(mode_val)
-            log.append((f"Mode imputation: {col}", miss))
+        df[col] = df[col].astype(str).str.strip().str.split().str[0]
 
-for col in ["Poverty_Rate", "Unemployment_Rate", "Access_to_Water", "Internet_Access"]:
-    if col in df.columns:
-        clipped = int(((df[col] < 0) | (df[col] > 100)).sum())
-        df[col] = df[col].clip(0, 100)
-        if clipped > 0:
-            log.append((f"Clip out-of-range: {col}", clipped))
-
-df = df.reset_index(drop=True)
-
+# Modeling prep
 ORD = {
     "Road_Access": {"High": 0, "Medium": 1, "Low": 2},
     "Health_Facility_Access": {"High": 0, "Medium": 1, "Low": 2},
@@ -201,7 +149,6 @@ X_raw = df[valid_features].copy()
 for col in valid_features:
     if col in ORD:
         X_raw[col] = X_raw[col].map(ORD[col])
-
 X_raw = X_raw.fillna(0.0)
 
 TARGET_MAP = {"High Priority": 2, "Medium Priority": 1, "Low Priority": 0}
@@ -289,6 +236,7 @@ if "Disaster_Risk_Level" in df.columns: severity["Disaster"] = df["Disaster_Risk
 df["Primary_Gap"] = severity.idxmax(axis=1) if not severity.empty else "Unknown"
 
 palette = {"High Priority": "#b91c1c", "Medium Priority": "#f59e0b", "Low Priority": "#16a34a"}
+order = ["High Priority", "Medium Priority", "Low Priority"]
 
 tabs = st.tabs([
     "Priority Classification",
@@ -301,7 +249,7 @@ tabs = st.tabs([
 ])
 
 with tabs[0]:
-    counts = df["Priority_Level"].value_counts().reindex(["High Priority", "Medium Priority", "Low Priority"], fill_value=0)
+    counts = df["Priority_Level"].value_counts().reindex(order, fill_value=0)
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Barangays evaluated", len(df))
     c2.metric("High Priority", int(counts["High Priority"]))
@@ -316,7 +264,6 @@ with tabs[0]:
         breakdown = st.selectbox("Barangay Count Breakdown by:", bd_options, key="breakdown_select")
         
         ct = pd.crosstab(df[breakdown], df["Priority_Level"])
-        order = ["High Priority", "Medium Priority", "Low Priority"]
         ct = ct.reindex(columns=[c for c in order if c in ct.columns], fill_value=0)
 
         fig, ax = plt.subplots(figsize=(8, 4))
@@ -334,13 +281,10 @@ with tabs[0]:
         line_opts = [c for c in ["Poverty_Rate", "Unemployment_Rate", "Access_to_Water", "Internet_Access"] if c in df.columns]
         line_var = st.selectbox("Trend Indicator (Line Graph):", line_opts, key="line_var")
         
-        city_col = "City_Name" if "City_Name" in df.columns else ("City Name" if "City Name" in df.columns else df.columns[0])
+        city_col = "City_Name" if "City_Name" in df.columns else df.columns[0]
         
-        # FIX: Force the dataframe into a 1D Series before grouping
-        df_subset = df[[city_col, "Priority_Level", line_var]].copy()
-        line_df = df_subset.groupby([city_col, "Priority_Level"])[line_var].mean().unstack()
+        line_df = df.groupby([city_col, "Priority_Level"])[line_var].mean().unstack()
         line_df = line_df.reindex(columns=[c for c in order if c in line_df.columns])
-        
         line_df = line_df.interpolate(method='linear', limit_direction='both')
         
         fig2, ax2 = plt.subplots(figsize=(8, 4))
