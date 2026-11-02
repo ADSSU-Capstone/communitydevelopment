@@ -49,10 +49,10 @@ if uploaded is not None:
         if uploaded.name.lower().endswith(".csv"):
             raw = pd.read_csv(uploaded)
         else:
+            # Read raw without headers to prevent merged cell duplication
             raw = pd.read_excel(uploaded, sheet_name="Table 1", header=None, skiprows=2)
             
             # Map columns based on your exact Excel layout
-            # A: Year, B: Barangay, C: Region, D: Province, E: City, etc.
             col_names = [
                 "Year", "Barangay_Name", "Region_Name", "Province_Name", "City_Name",
                 "Households", "Population", "Poverty_Rate", "Unemployment_Rate",
@@ -60,10 +60,10 @@ if uploaded is not None:
                 "Health_Facility_Access", "School_Access", "Disaster_Risk_Level", "Priority_Level"
             ]
             
-            if raw.shape[1] > 16:
-                raw = raw.iloc[:, :16]
+            # Slice first 16 columns and assign names
+            raw = raw.iloc[:, :16]
+            raw.columns = col_names
             
-            raw.columns = col_names[:raw.shape[1]]
     except Exception as exc:
         st.error(f"Unable to read uploaded file: {exc}")
         st.stop()
@@ -74,7 +74,7 @@ else:
 log = []
 df = raw.copy()
 
-# CRITICAL FIX: Forward-fill merged cells so all 314 rows know their City and Province
+# Fix merged cells by forward-filling City and Province
 if "City_Name" in df.columns:
     df["City_Name"] = df["City_Name"].ffill()
 if "Province_Name" in df.columns:
@@ -92,7 +92,7 @@ for col in df.columns:
     if isinstance(df[col], pd.Series) and df[col].dtype == object:
         df[col] = df[col].map(strip_invisible)
 
-# Clean rows
+# Filter valid rows
 before = len(df)
 df = df.dropna(how="all")
 if before - len(df) > 0:
@@ -122,7 +122,6 @@ if "Barangay_Name" in df.columns:
     df = df[df["Barangay_Name"].astype(str).str.strip() != ""]
     log.append(("Drop blank Barangay Name", before - len(df)))
 
-# Keep the clean index
 df = df.reset_index(drop=True)
 
 num_cols = ["Population", "Households", "Poverty_Rate", "Unemployment_Rate", "Access_to_Water", "Internet_Access"]
