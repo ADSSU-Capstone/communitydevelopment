@@ -103,11 +103,8 @@ else:
 
 log = []
 df = raw.copy()
-
-# Clean column names
 df.columns = [clean_col_name(c) for c in df.columns]
 
-# Rename to standard internal names
 col_map = {}
 for col in df.columns:
     if "priority" in col.lower(): col_map[col] = "Priority_Level"
@@ -135,7 +132,6 @@ for col in df.columns:
     if df[col].dtype == object:
         df[col] = df[col].map(strip_invisible)
 
-# Drop completely empty rows
 before = len(df)
 df = df.dropna(how="all")
 if before - len(df) > 0:
@@ -225,7 +221,6 @@ for col in valid_features:
     if col in ORD:
         X_raw[col] = X_raw[col].map(ORD[col])
 
-# Fill any remaining NaNs strictly with 0 to avoid scaler crashes
 X_raw = X_raw.fillna(0.0)
 
 TARGET_MAP = {"High Priority": 2, "Medium Priority": 1, "Low Priority": 0}
@@ -354,7 +349,9 @@ with tabs[0]:
         line_opts = [c for c in ["Poverty_Rate", "Unemployment_Rate", "Access_to_Water", "Internet_Access"] if c in df.columns]
         line_var = st.selectbox("Trend Indicator (Line Graph):", line_opts, key="line_var")
         
-        city_col = "City_Name"
+        # FIX: Safely get the city column for the trend chart
+        city_col = "City_Name" if "City_Name" in df.columns else ("City Name" if "City Name" in df.columns else df.columns[0])
+        
         line_df = df.groupby([city_col, "Priority_Level"])[line_var].mean().unstack()
         line_df = line_df.reindex(columns=[c for c in order if c in line_df.columns])
         
