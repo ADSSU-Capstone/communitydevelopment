@@ -49,18 +49,18 @@ if uploaded is not None:
         if uploaded.name.lower().endswith(".csv"):
             raw = pd.read_csv(uploaded)
         else:
-            # Read raw without headers to prevent merged cell duplication
+            # Read starting from row 3 (index 2) to skip the long descriptions
             raw = pd.read_excel(uploaded, sheet_name="Table 1", header=None, skiprows=2)
             
-            # Map columns based on your exact Excel layout
+            # THE FIX: Explicit mapping based on your exact Excel layout
             col_names = [
-                "Year", "Barangay_Name", "Region_Name", "Province_Name", "City_Name",
+                "City_Name", "Province_Name", "City_Name", "Year", "Barangay_Name",
                 "Households", "Population", "Poverty_Rate", "Unemployment_Rate",
                 "Access_to_Water", "Internet_Access", "Road_Access", 
                 "Health_Facility_Access", "School_Access", "Disaster_Risk_Level", "Priority_Level"
             ]
             
-            # Slice first 16 columns and assign names
+            # Slice the first 16 columns
             raw = raw.iloc[:, :16]
             raw.columns = col_names
             
@@ -92,18 +92,20 @@ for col in df.columns:
     if isinstance(df[col], pd.Series) and df[col].dtype == object:
         df[col] = df[col].map(strip_invisible)
 
-# Filter valid rows
+# Drop completely empty rows
 before = len(df)
 df = df.dropna(how="all")
 if before - len(df) > 0:
     log.append(("Drop completely empty rows", before - len(df)))
 
+# Drop rows without a target
 before = len(df)
 df = df[df["Priority_Level"].notna()]
 df = df[df["Priority_Level"].astype(str).str.strip() != ""]
 df = df[~df["Priority_Level"].astype(str).str.contains("High Priority - Area", na=False)]
 log.append(("Drop blank or descriptive Priority_Level", before - len(df)))
 
+# Normalize target
 priority_map = {
     "High Priority": "High Priority", "High": "High Priority",
     "Medium Priority": "Medium Priority", "Moderate Priority": "Medium Priority",
@@ -116,6 +118,7 @@ before = len(df)
 df = df.dropna(subset=["Priority_Level"])
 log.append(("Normalize Priority_Level labels", before - len(df)))
 
+# Drop rows without a Barangay Name
 if "Barangay_Name" in df.columns:
     before = len(df)
     df = df[df["Barangay_Name"].notna()]
@@ -124,6 +127,7 @@ if "Barangay_Name" in df.columns:
 
 df = df.reset_index(drop=True)
 
+# Impute missing numerics
 num_cols = ["Population", "Households", "Poverty_Rate", "Unemployment_Rate", "Access_to_Water", "Internet_Access"]
 for col in num_cols:
     if col in df.columns:
@@ -136,6 +140,7 @@ for col in num_cols:
             df[col] = df[col].fillna(median_val)
             log.append((f"Median imputation: {col}", miss))
 
+# Impute missing categoricals
 cat_cols = ["Road_Access", "Health_Facility_Access", "School_Access", "Disaster_Risk_Level"]
 for col in cat_cols:
     if col in df.columns:
@@ -155,6 +160,7 @@ for col in ["Poverty_Rate", "Unemployment_Rate", "Access_to_Water", "Internet_Ac
         if clipped > 0:
             log.append((f"Clip out-of-range: {col}", clipped))
 
+# Modeling prep
 ORD = {
     "Road_Access": {"High": 0, "Medium": 1, "Low": 2},
     "Health_Facility_Access": {"High": 0, "Medium": 1, "Low": 2},
@@ -281,8 +287,8 @@ with tabs[0]:
     
     colA, colB = st.columns(2)
     with colA:
-        bd_options = [c for c in ["City_Name", "Disaster_Risk_Level", "Road_Access", "Health_Facility_Access", "School_Access"] if c in df.columns]
-        breakdown = st.selectbox("Barangay Count Breakdown by:", bd_options, key="breakdown_select")
+        bd_options = [c for c in ["City_Name", "Barangay_Name", "Disaster_Risk_Level", "Road_Access", "Health_Facility_Access", "School_Access"] if c in df.columns]
+        breakdown = st.selectbox("Barangay Count Breakdown by:", bd_options, index=0, key="breakdown_select")
         
         ct = pd.crosstab(df[breakdown], df["Priority_Level"])
         ct = ct.reindex(columns=[c for c in order if c in ct.columns], fill_value=0)
@@ -294,7 +300,10 @@ with tabs[0]:
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
         ax.legend(title="Priority", frameon=False, loc='upper left', bbox_to_anchor=(1, 1))
-        plt.xticks(rotation=45, ha="right")
+        
+        # Fix rotation for better readability
+        plt.xticks(rotation=90, ha="center", fontsize=8)
+        plt.tight_layout()
         st.pyplot(fig)
         plt.close(fig)
 
@@ -318,9 +327,13 @@ with tabs[0]:
             ax2.spines["top"].set_visible(False)
             ax2.spines["right"].set_visible(False)
             ax2.legend(title="Priority", frameon=False, loc='upper left', bbox_to_anchor=(1, 1))
-            plt.xticks(rotation=45, ha="right")
+            
+            # Fix rotation for better readability
+            plt.xticks(rotation=90, ha="center", fontsize=8)
+            plt.tight_layout()
             st.pyplot(fig2)
             plt.close(fig2)
+            
             st.write(f"Across the {len(df)} evaluated barangays, {int(counts['High Priority'])} ({counts['High Priority']/max(len(df),1):.1%}) fall into the High Priority category, requiring immediate intervention. The line graph illustrates the average {line_var} across different cities, showing how specific priority levels correlate with this indicator.")
 
     st.markdown("### Indicator Averages by Priority Level")
