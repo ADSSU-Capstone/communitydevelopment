@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import streamlit as st
+from openpyxl import load_workbook
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.naive_bayes import GaussianNB
@@ -49,20 +50,23 @@ if uploaded is not None:
         if uploaded.name.lower().endswith(".csv"):
             raw = pd.read_csv(uploaded)
         else:
-            # Read starting from row 3 (index 2) to skip the long descriptions
-            raw = pd.read_excel(uploaded, sheet_name="Table 1", header=None, skiprows=2)
+            # FIX: Use openpyxl to read cells by exact column letter to avoid merged cell duplication
+            wb = load_workbook(uploaded, data_only=True)
+            ws = wb["Table 1"]
             
-            # THE FIX: Explicit mapping based on your exact Excel layout
+            data = []
+            # Start from row 3 (index 3) to skip headers and descriptions
+            for row in ws.iter_rows(min_row=3, max_col=16, values_only=True):
+                data.append(row)
+                
             col_names = [
-                "City_Name", "Province_Name", "City_Name", "Year", "Barangay_Name",
+                "Year", "Barangay_Name", "Region_Name", "Province_Name", "City_Name",
                 "Households", "Population", "Poverty_Rate", "Unemployment_Rate",
                 "Access_to_Water", "Internet_Access", "Road_Access", 
                 "Health_Facility_Access", "School_Access", "Disaster_Risk_Level", "Priority_Level"
             ]
             
-            # Slice the first 16 columns
-            raw = raw.iloc[:, :16]
-            raw.columns = col_names
+            raw = pd.DataFrame(data, columns=col_names)
             
     except Exception as exc:
         st.error(f"Unable to read uploaded file: {exc}")
