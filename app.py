@@ -43,20 +43,6 @@ h1, h2, h3 { color: #1e3a8a; }
 st.title("Barangay Priority Dashboard")
 st.markdown('<div class="dashboard-subtitle">Classification-Based Techniques for Identifying Priority Barangays for Community Development</div>', unsafe_allow_html=True)
 
-EXAMPLE_ROWS = [
-    ("Esperanza", "Concordia", 161, 623, 0.0, 4.8, 88.2, 51.3, "High", "Low", "Medium", "Medium", "High Priority"),
-    ("Esperanza", "Sinakungan", 81, 319, 72.0, 7.9, 76.1, 25.0, "High", "Low", "High", "High", "High Priority"),
-    ("Esperanza", "Agsabu", 80, 327, 63.0, 8.8, 72.9, 25.5, "Medium", "Low", "Low", "Low", "Low Priority"),
-    ("Esperanza", "Aguinaldo", 130, 515, 93.0, 6.8, 75.4, 29.0, "Low", "Low", "Medium", "Medium", "Medium Priority"),
-    ("Esperanza", "Anolingan", 90, 369, 83.0, 7.7, 71.1, 23.5, "Medium", "Medium", "Medium", "Medium", "Medium Priority"),
-    ("La Paz", "Bataan", 390, 1603, 80.0, 5.3, 85.6, 47.3, "Medium", "Low", "Low", "Low", "Low Priority"),
-    ("La Paz", "Sabang Adgawan", 373, 1569, 85.0, 5.2, 88.1, 42.8, "High", "High", "Medium", "Medium", "High Priority"),
-    ("Loreto", "San Mariano", 666, 2693, 599.0, 9.3, 72.0, 18.8, "High", "Low", "High", "High", "High Priority"),
-    ("Prosperidad", "Aurora", 792, 3028, 752.0, 8.3, 73.8, 22.2, "Medium", "Low", "Medium", "Low", "Medium Priority"),
-    ("San Luis", "Balit", 226, 871, 0.0, 4.0, 94.5, 53.5, "High", "High", "High", "High", "High Priority"),
-    ("Bayugan City", "Berseba", 460, 1871, 323.0, 8.0, 78.5, 26.0, "Medium", "Low", "Low", "Low", "Low Priority"),
-]
-
 def strip_invisible(value):
     if not isinstance(value, str):
         return value
@@ -72,8 +58,7 @@ def clean_col_name(c):
     return c.strip("_")
 
 with st.sidebar:
-    uploaded = st.file_uploader("Upload Dataset", type=["csv", "xlsx"])
-    use_example = st.checkbox("Use example dataset (if no upload)", value=False)
+    uploaded = st.file_uploader("Upload Dataset (CSV or Excel)", type=["csv", "xlsx"])
 
 if uploaded is not None:
     try:
@@ -84,17 +69,8 @@ if uploaded is not None:
     except Exception as exc:
         st.error(f"Unable to read uploaded file: {exc}")
         st.stop()
-elif use_example:
-    raw = pd.DataFrame(EXAMPLE_ROWS, columns=[
-        "City Name", "Barangay Name", "# of total Households", "Popolation",
-        "Poverty_Rate (%)", "Unemployment_Rate (%)", "Access_to_Water (%)",
-        "Internet_Access (%)", "Road_Access", "Health_Facility_Access",
-        "School_Access", "Disaster_Risk_Level", "Priority_Level"])
-    raw.insert(0, "Region Name", "Region XIII (Caraga)")
-    raw.insert(1, "Province Name", "Agusan del Sur")
-    raw.insert(3, "Year", 2025)
 else:
-    st.info("Upload a dataset or enable the example dataset to begin.")
+    st.info("Please upload a dataset to view the dashboard.")
     st.stop()
 
 log = []
@@ -258,11 +234,15 @@ for name, mdl in models.items():
         fitted[name] = mdl
         tr_pred = mdl.predict(X_tr)
         te_pred = mdl.predict(X_te)
+        
         try:
             cv_scores = cross_val_score(mdl, X_tr, y_tr, cv=cv, scoring="accuracy")
             cv_mean = float(cv_scores.mean())
+            if np.isnan(cv_mean):
+                cv_mean = np.nan
         except Exception:
             cv_mean = np.nan
+            
         results.append({
             "Model": name,
             "Train Accuracy": accuracy_score(y_tr, tr_pred),
@@ -368,23 +348,11 @@ with tabs[0]:
 
     st.markdown("### Indicator Averages by Priority Level")
     try:
-        # Separate numerical and categorical for correct aggregation
-        num_valid = [f for f in valid_features if f not in ORD]
-        cat_valid = [f for f in valid_features if f in ORD]
-
-        summary_num = df.groupby("Priority_Level")[num_valid].mean().round(2) if num_valid else pd.DataFrame()
-        
-        if cat_valid:
-            # Use Mode (most frequent) for categorical strings
-            summary_cat = df.groupby("Priority_Level")[cat_valid].agg(lambda x: x.mode().iloc[0] if not x.mode().empty else "Unknown")
-        else:
-            summary_cat = pd.DataFrame()
-            
-        summary = pd.concat([summary_num, summary_cat], axis=1)
+        numerical_cols = [c for c in ["Population", "Households", "Poverty_Rate", "Unemployment_Rate", "Access_to_Water", "Internet_Access"] if c in df.columns]
+        summary = df.groupby("Priority_Level")[numerical_cols].mean().round(2)
         summary = summary.reindex([c for c in order if c in summary.index])
-        
         st.dataframe(summary, use_container_width=True)
-        st.write("This table provides the average scores for numerical indicators and the most frequent (mode) category for infrastructure and disaster indicators, grouped by their actual priority classification.")
+        st.write("This table provides the average scores of all socioeconomic and infrastructure indicators grouped by their actual priority classification, allowing for a direct comparison of living conditions between High, Medium, and Low priority barangays.")
     except Exception:
         pass
 
