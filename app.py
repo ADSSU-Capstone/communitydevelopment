@@ -66,9 +66,10 @@ if uploaded is not None:
             raw = pd.read_csv(uploaded)
         else:
             raw = pd.read_excel(uploaded, sheet_name="Table 1")
-            raw.columns = raw.iloc[0]  # Row 1 as headers
-            raw = raw.drop([0, 1])      # Drop descriptions and headers from data rows
-            raw = raw.loc[:, ~raw.columns.duplicated()] # FIX: Drop duplicate columns
+            # Set the actual header from Row 0
+            raw.columns = raw.iloc[0]
+            # Drop the header row and the description row
+            raw = raw.drop([0, 1])
             raw = raw.reset_index(drop=True)
     except Exception as exc:
         st.error(f"Unable to read uploaded file: {exc}")
@@ -79,9 +80,11 @@ else:
 
 log = []
 df = raw.copy()
+
+# FIX: Remove duplicate columns before cleaning names
+df = df.loc[:, ~df.columns.duplicated()].copy()
 df.columns = [clean_col_name(c) for c in df.columns]
 
-# Map exact Excel names to internal names
 col_map = {}
 for col in df.columns:
     c_lower = col.lower()
@@ -333,7 +336,9 @@ with tabs[0]:
         
         city_col = "City_Name" if "City_Name" in df.columns else ("City Name" if "City Name" in df.columns else df.columns[0])
         
-        line_df = df.groupby([city_col, "Priority_Level"])[line_var].mean().unstack()
+        # FIX: Force the dataframe into a 1D Series before grouping
+        df_subset = df[[city_col, "Priority_Level", line_var]].copy()
+        line_df = df_subset.groupby([city_col, "Priority_Level"])[line_var].mean().unstack()
         line_df = line_df.reindex(columns=[c for c in order if c in line_df.columns])
         
         line_df = line_df.interpolate(method='linear', limit_direction='both')
