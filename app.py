@@ -49,18 +49,21 @@ if uploaded is not None:
         if uploaded.name.lower().endswith(".csv"):
             raw = pd.read_csv(uploaded)
         else:
-            # FIX: Using standard pandas read_excel which correctly ignores leading blank columns
+            # Read with header=None to grab raw cells
             raw = pd.read_excel(uploaded, sheet_name="Table 1", header=None, skiprows=2)
             
-            # We slice the last 16 columns to guarantee we get the exact data
-            raw = raw.iloc[:, -16:]
-            
+            # Based on your exact Excel layout:
+            # A: Region, B: Province, C: City, D: Year, E: Barangay
+            # F: Households, G: Population, H: Poverty, I: Unemployment
+            # J: Water, K: Internet, L: Road, M: Health, N: School, O: Disaster, P: Priority
             col_names = [
-                "Year", "Barangay_Name", "Region_Name", "Province_Name", "City_Name",
+                "Region_Name", "Province_Name", "City_Name", "Year", "Barangay_Name",
                 "Households", "Population", "Poverty_Rate", "Unemployment_Rate",
                 "Access_to_Water", "Internet_Access", "Road_Access", 
                 "Health_Facility_Access", "School_Access", "Disaster_Risk_Level", "Priority_Level"
             ]
+            
+            raw = raw.iloc[:, :16]
             raw.columns = col_names
             
     except Exception as exc:
@@ -123,7 +126,7 @@ if "Barangay_Name" in df.columns:
     df = df[df["Barangay_Name"].notna()]
     df = df[df["Barangay_Name"].astype(str).str.strip() != ""]
     
-    # FIX: If the Barangay Name is actually the Province Name, it means the columns shifted. Drop them.
+    # THE FIX: If the Barangay Name is actually the Province Name, drop the row
     df = df[df["Barangay_Name"] != "Agusan del Sur"]
     log.append(("Drop blank Barangay Name", before - len(df)))
 
