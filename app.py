@@ -80,11 +80,8 @@ if uploaded is not None:
         if uploaded.name.lower().endswith(".csv"):
             raw = pd.read_csv(uploaded)
         else:
-            wb = load_workbook(uploaded, read_only=True)
-            if "Table 1" in wb.sheetnames:
-                raw = pd.read_excel(uploaded, sheet_name="Table 1", header=1)
-            else:
-                raw = pd.read_excel(uploaded, header=1)
+            # Read row 1 as headers and skip row 2 (the long description text)
+            raw = pd.read_excel(uploaded, sheet_name="Table 1", header=0, skiprows=[1])
     except Exception as exc:
         st.error(f"Unable to read uploaded file: {exc}")
         st.stop()
@@ -107,20 +104,21 @@ df.columns = [clean_col_name(c) for c in df.columns]
 
 col_map = {}
 for col in df.columns:
-    if "priority" in col.lower(): col_map[col] = "Priority_Level"
-    elif "pop" in col.lower(): col_map[col] = "Population"
-    elif "household" in col.lower() or col == "of_total_Households": col_map[col] = "Households"
-    elif "city" in col.lower(): col_map[col] = "City_Name"
-    elif "barangay" in col.lower() and "name" in col.lower(): col_map[col] = "Barangay_Name"
-    elif "province" in col.lower(): col_map[col] = "Province_Name"
-    elif "poverty" in col.lower(): col_map[col] = "Poverty_Rate"
-    elif "unemployment" in col.lower(): col_map[col] = "Unemployment_Rate"
-    elif "water" in col.lower(): col_map[col] = "Access_to_Water"
-    elif "internet" in col.lower(): col_map[col] = "Internet_Access"
-    elif "road" in col.lower(): col_map[col] = "Road_Access"
-    elif "health" in col.lower(): col_map[col] = "Health_Facility_Access"
-    elif "school" in col.lower(): col_map[col] = "School_Access"
-    elif "disaster" in col.lower(): col_map[col] = "Disaster_Risk_Level"
+    c_lower = col.lower()
+    if "priority" in c_lower: col_map[col] = "Priority_Level"
+    elif "pop" in c_lower: col_map[col] = "Population"
+    elif "household" in c_lower or col == "of_total_Households": col_map[col] = "Households"
+    elif "city" in c_lower: col_map[col] = "City_Name"
+    elif "barangay" in c_lower and "name" in c_lower: col_map[col] = "Barangay_Name"
+    elif "province" in c_lower: col_map[col] = "Province_Name"
+    elif "poverty" in c_lower: col_map[col] = "Poverty_Rate"
+    elif "unemployment" in c_lower: col_map[col] = "Unemployment_Rate"
+    elif "water" in c_lower: col_map[col] = "Access_to_Water"
+    elif "internet" in c_lower: col_map[col] = "Internet_Access"
+    elif "road" in c_lower: col_map[col] = "Road_Access"
+    elif "health" in c_lower: col_map[col] = "Health_Facility_Access"
+    elif "school" in c_lower: col_map[col] = "School_Access"
+    elif "disaster" in c_lower: col_map[col] = "Disaster_Risk_Level"
 
 df = df.rename(columns=col_map)
 
@@ -349,7 +347,6 @@ with tabs[0]:
         line_opts = [c for c in ["Poverty_Rate", "Unemployment_Rate", "Access_to_Water", "Internet_Access"] if c in df.columns]
         line_var = st.selectbox("Trend Indicator (Line Graph):", line_opts, key="line_var")
         
-        # FIX: Safely get the city column for the trend chart
         city_col = "City_Name" if "City_Name" in df.columns else ("City Name" if "City Name" in df.columns else df.columns[0])
         
         line_df = df.groupby([city_col, "Priority_Level"])[line_var].mean().unstack()
