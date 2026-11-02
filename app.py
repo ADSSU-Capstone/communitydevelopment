@@ -80,7 +80,6 @@ if uploaded is not None:
         if uploaded.name.lower().endswith(".csv"):
             raw = pd.read_csv(uploaded)
         else:
-            # Read row 1 as headers and skip row 2 (the long description text)
             raw = pd.read_excel(uploaded, sheet_name="Table 1", header=0, skiprows=[1])
     except Exception as exc:
         st.error(f"Unable to read uploaded file: {exc}")
@@ -369,12 +368,23 @@ with tabs[0]:
 
     st.markdown("### Indicator Averages by Priority Level")
     try:
-        summary_df = df[valid_features].apply(pd.to_numeric, errors="coerce")
-        summary_df["Priority_Level"] = df["Priority_Level"]
-        summary = summary_df.groupby("Priority_Level")[valid_features].mean().round(2)
+        # Separate numerical and categorical for correct aggregation
+        num_valid = [f for f in valid_features if f not in ORD]
+        cat_valid = [f for f in valid_features if f in ORD]
+
+        summary_num = df.groupby("Priority_Level")[num_valid].mean().round(2) if num_valid else pd.DataFrame()
+        
+        if cat_valid:
+            # Use Mode (most frequent) for categorical strings
+            summary_cat = df.groupby("Priority_Level")[cat_valid].agg(lambda x: x.mode().iloc[0] if not x.mode().empty else "Unknown")
+        else:
+            summary_cat = pd.DataFrame()
+            
+        summary = pd.concat([summary_num, summary_cat], axis=1)
         summary = summary.reindex([c for c in order if c in summary.index])
+        
         st.dataframe(summary, use_container_width=True)
-        st.write("This table provides the average scores of all socioeconomic, infrastructure, and disaster indicators grouped by their actual priority classification, allowing for a direct comparison of living conditions between High, Medium, and Low priority barangays.")
+        st.write("This table provides the average scores for numerical indicators and the most frequent (mode) category for infrastructure and disaster indicators, grouped by their actual priority classification.")
     except Exception:
         pass
 
