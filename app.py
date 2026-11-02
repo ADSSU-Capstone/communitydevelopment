@@ -4,7 +4,6 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import streamlit as st
-from openpyxl import load_workbook
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.naive_bayes import GaussianNB
@@ -50,23 +49,19 @@ if uploaded is not None:
         if uploaded.name.lower().endswith(".csv"):
             raw = pd.read_csv(uploaded)
         else:
-            # FIX: Use openpyxl to read cells by exact column letter to avoid merged cell duplication
-            wb = load_workbook(uploaded, data_only=True)
-            ws = wb["Table 1"]
+            # FIX: Using standard pandas read_excel which correctly ignores leading blank columns
+            raw = pd.read_excel(uploaded, sheet_name="Table 1", header=None, skiprows=2)
             
-            data = []
-            # Start from row 3 (index 3) to skip headers and descriptions
-            for row in ws.iter_rows(min_row=3, max_col=16, values_only=True):
-                data.append(row)
-                
+            # We slice the last 16 columns to guarantee we get the exact data
+            raw = raw.iloc[:, -16:]
+            
             col_names = [
                 "Year", "Barangay_Name", "Region_Name", "Province_Name", "City_Name",
                 "Households", "Population", "Poverty_Rate", "Unemployment_Rate",
                 "Access_to_Water", "Internet_Access", "Road_Access", 
                 "Health_Facility_Access", "School_Access", "Disaster_Risk_Level", "Priority_Level"
             ]
-            
-            raw = pd.DataFrame(data, columns=col_names)
+            raw.columns = col_names
             
     except Exception as exc:
         st.error(f"Unable to read uploaded file: {exc}")
@@ -127,6 +122,9 @@ if "Barangay_Name" in df.columns:
     before = len(df)
     df = df[df["Barangay_Name"].notna()]
     df = df[df["Barangay_Name"].astype(str).str.strip() != ""]
+    
+    # FIX: If the Barangay Name is actually the Province Name, it means the columns shifted. Drop them.
+    df = df[df["Barangay_Name"] != "Agusan del Sur"]
     log.append(("Drop blank Barangay Name", before - len(df)))
 
 df = df.reset_index(drop=True)
@@ -305,7 +303,6 @@ with tabs[0]:
         ax.spines["right"].set_visible(False)
         ax.legend(title="Priority", frameon=False, loc='upper left', bbox_to_anchor=(1, 1))
         
-        # Fix rotation for better readability
         plt.xticks(rotation=90, ha="center", fontsize=8)
         plt.tight_layout()
         st.pyplot(fig)
@@ -332,7 +329,6 @@ with tabs[0]:
             ax2.spines["right"].set_visible(False)
             ax2.legend(title="Priority", frameon=False, loc='upper left', bbox_to_anchor=(1, 1))
             
-            # Fix rotation for better readability
             plt.xticks(rotation=90, ha="center", fontsize=8)
             plt.tight_layout()
             st.pyplot(fig2)
