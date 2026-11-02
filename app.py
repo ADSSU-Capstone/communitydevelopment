@@ -49,20 +49,14 @@ if uploaded is not None:
         if uploaded.name.lower().endswith(".csv"):
             raw = pd.read_csv(uploaded)
         else:
-            # Read with header=None to grab raw cells
             raw = pd.read_excel(uploaded, sheet_name="Table 1", header=None, skiprows=2)
             
-            # Based on your exact Excel layout:
-            # A: Region, B: Province, C: City, D: Year, E: Barangay
-            # F: Households, G: Population, H: Poverty, I: Unemployment
-            # J: Water, K: Internet, L: Road, M: Health, N: School, O: Disaster, P: Priority
             col_names = [
                 "Region_Name", "Province_Name", "City_Name", "Year", "Barangay_Name",
                 "Households", "Population", "Poverty_Rate", "Unemployment_Rate",
                 "Access_to_Water", "Internet_Access", "Road_Access", 
                 "Health_Facility_Access", "School_Access", "Disaster_Risk_Level", "Priority_Level"
             ]
-            
             raw = raw.iloc[:, :16]
             raw.columns = col_names
             
@@ -76,7 +70,6 @@ else:
 log = []
 df = raw.copy()
 
-# Fix merged cells by forward-filling City and Province
 if "City_Name" in df.columns:
     df["City_Name"] = df["City_Name"].ffill()
 if "Province_Name" in df.columns:
@@ -94,20 +87,17 @@ for col in df.columns:
     if isinstance(df[col], pd.Series) and df[col].dtype == object:
         df[col] = df[col].map(strip_invisible)
 
-# Drop completely empty rows
 before = len(df)
 df = df.dropna(how="all")
 if before - len(df) > 0:
     log.append(("Drop completely empty rows", before - len(df)))
 
-# Drop rows without a target
 before = len(df)
 df = df[df["Priority_Level"].notna()]
 df = df[df["Priority_Level"].astype(str).str.strip() != ""]
 df = df[~df["Priority_Level"].astype(str).str.contains("High Priority - Area", na=False)]
 log.append(("Drop blank or descriptive Priority_Level", before - len(df)))
 
-# Normalize target
 priority_map = {
     "High Priority": "High Priority", "High": "High Priority",
     "Medium Priority": "Medium Priority", "Moderate Priority": "Medium Priority",
@@ -120,19 +110,15 @@ before = len(df)
 df = df.dropna(subset=["Priority_Level"])
 log.append(("Normalize Priority_Level labels", before - len(df)))
 
-# Drop rows without a Barangay Name
 if "Barangay_Name" in df.columns:
     before = len(df)
     df = df[df["Barangay_Name"].notna()]
     df = df[df["Barangay_Name"].astype(str).str.strip() != ""]
-    
-    # THE FIX: If the Barangay Name is actually the Province Name, drop the row
     df = df[df["Barangay_Name"] != "Agusan del Sur"]
     log.append(("Drop blank Barangay Name", before - len(df)))
 
 df = df.reset_index(drop=True)
 
-# Impute missing numerics
 num_cols = ["Population", "Households", "Poverty_Rate", "Unemployment_Rate", "Access_to_Water", "Internet_Access"]
 for col in num_cols:
     if col in df.columns:
@@ -145,7 +131,6 @@ for col in num_cols:
             df[col] = df[col].fillna(median_val)
             log.append((f"Median imputation: {col}", miss))
 
-# Impute missing categoricals
 cat_cols = ["Road_Access", "Health_Facility_Access", "School_Access", "Disaster_Risk_Level"]
 for col in cat_cols:
     if col in df.columns:
@@ -165,7 +150,6 @@ for col in ["Poverty_Rate", "Unemployment_Rate", "Access_to_Water", "Internet_Ac
         if clipped > 0:
             log.append((f"Clip out-of-range: {col}", clipped))
 
-# Modeling prep
 ORD = {
     "Road_Access": {"High": 0, "Medium": 1, "Low": 2},
     "Health_Facility_Access": {"High": 0, "Medium": 1, "Low": 2},
@@ -292,7 +276,7 @@ with tabs[0]:
     
     colA, colB = st.columns(2)
     with colA:
-        bd_options = [c for c in ["City_Name", "Barangay_Name", "Disaster_Risk_Level", "Road_Access", "Health_Facility_Access", "School_Access"] if c in df.columns]
+        bd_options = [c for c in ["City_Name", "Disaster_Risk_Level", "Road_Access", "Health_Facility_Access", "School_Access", "Barangay_Name"] if c in df.columns]
         breakdown = st.selectbox("Barangay Count Breakdown by:", bd_options, index=0, key="breakdown_select")
         
         ct = pd.crosstab(df[breakdown], df["Priority_Level"])
@@ -306,7 +290,14 @@ with tabs[0]:
         ax.spines["right"].set_visible(False)
         ax.legend(title="Priority", frameon=False, loc='upper left', bbox_to_anchor=(1, 1))
         
-        plt.xticks(rotation=90, ha="center", fontsize=8)
+        if breakdown == "Barangay_Name":
+            # If the user selects barangay, hide the ticks so it doesn't turn into a black blob
+            ax.set_xticks([])
+            st.write("Note: Because there are 313 barangays, individual x-axis labels are hidden for readability.")
+        else:
+            # Otherwise rotate them nicely
+            plt.xticks(rotation=90, ha="center", fontsize=8)
+            
         plt.tight_layout()
         st.pyplot(fig)
         plt.close(fig)
