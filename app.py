@@ -53,18 +53,18 @@ if uploaded is not None:
             # This completely bypasses the merged headers and description row.
             raw = pd.read_excel(uploaded, sheet_name="Table 1", header=None, skiprows=2)
             
-            # Based on your exact Excel layout:
-            # A: Region, B: Province, C: City, D: Year, E: Barangay
+            # Based on your screenshot:
+            # A: Year, B: Barangay Name, C: Region, D: Province, E: City
             # F: Households, G: Population, H: Poverty, I: Unemployment
             # J: Water, K: Internet, L: Road, M: Health, N: School, O: Disaster, P: Priority
             col_names = [
-                "Region_Name", "Province_Name", "City_Name", "Year", "Barangay_Name",
+                "Year", "Barangay_Name", "Region_Name", "Province_Name", "City_Name",
                 "Households", "Population", "Poverty_Rate", "Unemployment_Rate",
                 "Access_to_Water", "Internet_Access", "Road_Access", 
                 "Health_Facility_Access", "School_Access", "Disaster_Risk_Level", "Priority_Level"
             ]
             
-            # If the sheet has more than 16 columns, keep only the first 16
+            # Keep only the first 16 columns
             if raw.shape[1] > 16:
                 raw = raw.iloc[:, :16]
             
@@ -279,26 +279,28 @@ with tabs[0]:
 
     with colB:
         line_opts = [c for c in ["Poverty_Rate", "Unemployment_Rate", "Access_to_Water", "Internet_Access"] if c in df.columns]
-        line_var = st.selectbox("Trend Indicator (Line Graph):", line_opts, key="line_var")
         
-        city_col = "City_Name" if "City_Name" in df.columns else df.columns[0]
-        
-        line_df = df.groupby([city_col, "Priority_Level"])[line_var].mean().unstack()
-        line_df = line_df.reindex(columns=[c for c in order if c in line_df.columns])
-        line_df = line_df.interpolate(method='linear', limit_direction='both')
-        
-        fig2, ax2 = plt.subplots(figsize=(8, 4))
-        line_df.plot(kind="line", marker="o", ax=ax2, color=[palette[c] for c in line_df.columns])
-        ax2.set_ylabel(f"Average {line_var}")
-        ax2.set_xlabel(city_col)
-        ax2.spines["top"].set_visible(False)
-        ax2.spines["right"].set_visible(False)
-        ax2.legend(title="Priority", frameon=False, loc='upper left', bbox_to_anchor=(1, 1))
-        plt.xticks(rotation=45, ha="right")
-        st.pyplot(fig2)
-        plt.close(fig2)
-
-    st.write(f"Across the {len(df)} evaluated barangays, {int(counts['High Priority'])} ({counts['High Priority']/max(len(df),1):.1%}) fall into the High Priority category, requiring immediate intervention. The line graph illustrates the average {line_var} across different cities, showing how specific priority levels correlate with this indicator.")
+        if not line_opts:
+            st.warning("No numerical indicators found for the trend line.")
+        else:
+            line_var = st.selectbox("Trend Indicator (Line Graph):", line_opts, key="line_var")
+            city_col = "City_Name" if "City_Name" in df.columns else df.columns[0]
+            
+            line_df = df.groupby([city_col, "Priority_Level"])[line_var].mean().unstack()
+            line_df = line_df.reindex(columns=[c for c in order if c in line_df.columns])
+            line_df = line_df.interpolate(method='linear', limit_direction='both')
+            
+            fig2, ax2 = plt.subplots(figsize=(8, 4))
+            line_df.plot(kind="line", marker="o", ax=ax2, color=[palette[c] for c in line_df.columns])
+            ax2.set_ylabel(f"Average {line_var}")
+            ax2.set_xlabel(city_col)
+            ax2.spines["top"].set_visible(False)
+            ax2.spines["right"].set_visible(False)
+            ax2.legend(title="Priority", frameon=False, loc='upper left', bbox_to_anchor=(1, 1))
+            plt.xticks(rotation=45, ha="right")
+            st.pyplot(fig2)
+            plt.close(fig2)
+            st.write(f"Across the {len(df)} evaluated barangays, {int(counts['High Priority'])} ({counts['High Priority']/max(len(df),1):.1%}) fall into the High Priority category, requiring immediate intervention. The line graph illustrates the average {line_var} across different cities, showing how specific priority levels correlate with this indicator.")
 
     st.markdown("### Indicator Averages by Priority Level")
     try:
